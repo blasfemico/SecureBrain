@@ -1,53 +1,79 @@
-from twilio.rest import Client
-import cv2
 import os
 import datetime
-import requests
+import logging
+from gtts import gTTS
+import subprocess
+import cv2
 
-TWILIO_CONFIG = {
-    "account_sid": "YOUR_ACCOUNT_SID",
-    "auth_token": "YOUR_AUTH_TOKEN",
-    "from_phone": "YOUR_TWILIO_PHONE",
-    "to_phone": "YOUR_PHONE_NUMBER",
-}
+# Configuración del sistema de logs
+log_folder = "logs"
+os.makedirs(log_folder, exist_ok=True)
+logging.basicConfig(
+    filename=os.path.join(log_folder, "notifications.log"),
+    level=logging.DEBUG,  # Cambiado a DEBUG para más detalles
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
 
-TELEGRAM_CONFIG = {
-    "bot_token": "YOUR_BOT_TOKEN",
-    "chat_id": "YOUR_CHAT_ID",
+# Configuración de Linphone
+LINPHONE_CONFIG = {
+    "sip_address": "sip:name@sip.linphone.org",
+    "password": "password",
+    "call_to": "sip:number@sip.linphone.org",
+    "audio_file": "voice_message.wav",
 }
 
 def send_alert(image, message):
-    # Enviar notificación por Twilio
-    send_twilio_alert(image, message)
+    try:
+        logging.info("Generando alerta.")
+        print("Generando alerta.")
+        generate_voice_message(message)
+        initiate_sip_call()
+        logging.info("Alerta enviada correctamente.")
+        print("Alerta enviada correctamente.")
+    except Exception as e:
+        logging.error(f"Error al enviar alerta: {str(e)}")
+        print(f"Error al enviar alerta: {str(e)}")
 
-    # Enviar notificación por Telegram
-    send_telegram_alert(image, message)
+def generate_voice_message(message):
+    tts = gTTS(text=message, lang='es')
+    tts.save(LINPHONE_CONFIG["audio_file"])
+    logging.info("Mensaje de voz generado y guardado.")
+    print("Mensaje de voz generado y guardado.")
 
-def send_twilio_alert(image, message):
-    client = Client(TWILIO_CONFIG["account_sid"], TWILIO_CONFIG["auth_token"])
-    timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    image_path = f"temp_{timestamp}.jpg"
-    cv2.imwrite(image_path, image)
+def initiate_sip_call():
+    try:
+        command = [
+            "linphonecsh",
+            "init",
+        ]
+        subprocess.run(command, check=True)
 
-    client.messages.create(
-        body=f"{message} - Hora: {timestamp}",
-        from_=TWILIO_CONFIG["from_phone"],
-        to=TWILIO_CONFIG["to_phone"],
-        media_url=f"file://{os.path.abspath(image_path)}"
-    )
+        login_command = [
+            "linphonecsh",
+            "generic", f"register --username {LINPHONE_CONFIG['sip_address']} --password {LINPHONE_CONFIG['password']}"
+        ]
+        subprocess.run(login_command, check=True)
 
-    os.remove(image_path)
+        call_command = [
+            "linphonecsh",
+            "generic", f"call {LINPHONE_CONFIG['call_to']}"
+        ]
+        subprocess.run(call_command, check=True)
 
-def send_telegram_alert(image, message):
-    timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    image_path = f"temp_{timestamp}.jpg"
-    cv2.imwrite(image_path, image)
+        play_audio_command = [
+            "linphonecsh",
+            "generic", f"play {LINPHONE_CONFIG['audio_file']}"
+        ]
+        subprocess.run(play_audio_command, check=True)
 
-    with open(image_path, "rb") as img:
-        requests.post(
-            f"https://api.telegram.org/bot{TELEGRAM_CONFIG['bot_token']}/sendPhoto",
-            data={"chat_id": TELEGRAM_CONFIG["chat_id"], "caption": message},
-            files={"photo": img}
-        )
+        hangup_command = [
+            "linphonecsh",
+            "generic", "terminate"
+        ]
+        subprocess.run(hangup_command, check=True)
 
-    os.remove(image_path)
+        logging.info("Llamada realizada exitosamente.")
+        print("Llamada realizada exitosamente.")
+    except subprocess.CalledProcessError as e:
+        logging.error(f"Error en la llamada SIP: {str(e)}")
+        print(f"Error en la llamada SIP: {str(e)}")

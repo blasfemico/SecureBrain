@@ -3,3 +3,4 @@ mediapipe
 twilio
 pillow
 numpy
+gtts    
